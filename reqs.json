@@ -1,0 +1,14 @@
+{
+    "VOIDLING": {
+        "level": 400,
+        "networth": 10000000000
+    },
+    "ZEALOT": {
+        "level": 280,
+        "networth": 5000000000
+    },
+    "WATCHER": {
+        "level": 200,
+        "networth": 2000000000
+    }
+}
