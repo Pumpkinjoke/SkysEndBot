@@ -122,14 +122,48 @@ client.on('interactionCreate', async interaction => {
     const { commandName, options, user, member, guild } = interaction;
     const conf = getLatestConfig();
 
-// --- IHATEAPI COMMAND ---
+
+    // ==========================================
+    // 🟢 PUBLIC COMMANDS
+    // ==========================================
+
+    if (commandName === 'verify') {
+        if (verifiedUsers[user.id]) return interaction.reply({ content: "❌ Already verified!", flags: [MessageFlags.Ephemeral] });
+        await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
+        try {
+            const mojang = await axios.get(`https://api.mojang.com/users/profiles/minecraft/${options.getString('ign')}`);
+            const uuid = mojang.data.id;
+            const hypixel = await axios.get(`https://api.hypixel.net/v2/player?key=${conf.HYPIXEL_KEY}&uuid=${uuid}`);
+            const link = hypixel.data.player?.socialMedia?.links?.DISCORD;
+            if (link !== user.username) return interaction.followUp(`❌ Mismatch. Hypixel: \`${link || "None"}\`.`);
+            verifiedUsers[user.id] = uuid;
+            saveDb();
+            await member.setNickname(options.getString('ign')).catch(() => {});
+            await syncMember(member, uuid);
+            interaction.followUp(`✅ Verified!`);
+        } catch (e) { interaction.followUp(`❌ Error Verifying.`); }
+    }
+
+    if (commandName === 'check') {
+        const target = options.getMember('user');
+        if (!verifiedUsers[target.id]) return interaction.reply({ content: "❌ Not verified.", flags: [MessageFlags.Ephemeral] });
+        await interaction.deferReply();
+        const stats = await getStats(verifiedUsers[target.id]);
+        interaction.followUp({ embeds: [new EmbedBuilder().setTitle(`Stats: ${target.displayName}`).addFields({ name: 'Level', value: stats.lv.toFixed(2), inline: true }, { name: 'NW', value: (stats.nw / 1e9).toFixed(2) + "B", inline: true }).setColor(0x00AAFF)] });
+    }
+
+
+    // ==========================================
+    // 🔒 ADMIN COMMANDS
+    // ==========================================
+
     if (commandName === 'ihateapi') {
         if (!member.roles.cache.has(conf.ROLES.ADMIN)) return interaction.reply({ content: "❌ No permission.", flags: [MessageFlags.Ephemeral] });
         await interaction.deferReply();
         const embed = new EmbedBuilder().setTitle("📡 API Debugger").setTimestamp();
         let hasError = false;
 
-        // 1. Mojang Check (Notch)
+        // 1. Mojang Check
         try {
             const start = Date.now();
             const mojangRes = await axios.get('https://api.mojang.com/users/profiles/minecraft/Notch');
@@ -139,24 +173,13 @@ client.on('interactionCreate', async interaction => {
             embed.addFields({ name: `❌ Mojang Error`, value: `\`\`\`json\n${JSON.stringify(e.response?.data||e.message,null,2).substring(0,1000)}\`\`\`` });
         }
 
-        // 2. Hypixel Check (Pumpkinjoke's Profiles)
+        // 2. Hypixel Check
         try {
             const start = Date.now();
-            // Pumpkinjoke UUID: 65265a6ca6c740f6a44027e4c3cb7b86
-            // Using /v2/skyblock/profiles
             const hypixelRes = await axios.get(`https://api.hypixel.net/v2/skyblock/profiles?key=${conf.HYPIXEL_KEY}&uuid=65265a6ca6c740f6a44027e4c3cb7b86`);
-            
             const ping = Date.now() - start;
-            
-            // We strip the profiles array content slightly to make the output cleaner, 
-            // otherwise it's too massive for Discord
-            const previewData = {
-                success: hypixelRes.data.success,
-                profiles_found: hypixelRes.data.profiles?.length || 0,
-                first_profile_id: hypixelRes.data.profiles?.[0]?.profile_id || "None"
-            };
-
-            embed.addFields({ name: `✅ Hypixel (Pumpkinjoke) (${ping}ms)`, value: `\`\`\`json\n${JSON.stringify(previewData,null,2)}\n// Full data truncated for size\`\`\`` });
+            const previewData = { success: hypixelRes.data.success, profiles_found: hypixelRes.data.profiles?.length || 0, first_profile_id: hypixelRes.data.profiles?.[0]?.profile_id || "None" };
+            embed.addFields({ name: `✅ Hypixel (Pumpkinjoke) (${ping}ms)`, value: `\`\`\`json\n${JSON.stringify(previewData,null,2)}\n// Full data truncated\`\`\`` });
         } catch (e) {
             hasError = true;
             embed.addFields({ name: `❌ Hypixel Error`, value: `\`\`\`json\n${JSON.stringify(e.response?.data||e.message,null,2).substring(0,1000)}\`\`\`` });
@@ -166,8 +189,9 @@ client.on('interactionCreate', async interaction => {
         interaction.followUp({ embeds: [embed] });
     }
 
-    // --- UPDATEALL COMMAND ---
     if (commandName === 'updateall') {
+        if (!member.roles.cache.has(conf.ROLES.ADMIN)) return interaction.reply({ content: "❌ No permission.", flags: [MessageFlags.Ephemeral] });
+
         await interaction.deferReply();
         try {
             const hGuild = await axios.get(`https://api.hypixel.net/v2/guild?key=${conf.HYPIXEL_KEY}&name=${conf.GUILD_NAME}`);
@@ -222,32 +246,9 @@ client.on('interactionCreate', async interaction => {
         } catch (e) { interaction.followUp("❌ API Error."); console.error(e); }
     }
 
-    if (commandName === 'verify') {
-        if (verifiedUsers[user.id]) return interaction.reply({ content: "❌ Already verified!", flags: [MessageFlags.Ephemeral] });
-        await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
-        try {
-            const mojang = await axios.get(`https://api.mojang.com/users/profiles/minecraft/${options.getString('ign')}`);
-            const uuid = mojang.data.id;
-            const hypixel = await axios.get(`https://api.hypixel.net/v2/player?key=${conf.HYPIXEL_KEY}&uuid=${uuid}`);
-            const link = hypixel.data.player?.socialMedia?.links?.DISCORD;
-            if (link !== user.username) return interaction.followUp(`❌ Mismatch. Hypixel: \`${link || "None"}\`.`);
-            verifiedUsers[user.id] = uuid;
-            saveDb();
-            await member.setNickname(options.getString('ign')).catch(() => {});
-            await syncMember(member, uuid);
-            interaction.followUp(`✅ Verified!`);
-        } catch (e) { interaction.followUp(`❌ Error Verifying.`); }
-    }
-
-    if (commandName === 'check') {
-        const target = options.getMember('user');
-        if (!verifiedUsers[target.id]) return interaction.reply({ content: "❌ Not verified.", flags: [MessageFlags.Ephemeral] });
-        await interaction.deferReply();
-        const stats = await getStats(verifiedUsers[target.id]);
-        interaction.followUp({ embeds: [new EmbedBuilder().setTitle(`Stats: ${target.displayName}`).addFields({ name: 'Level', value: stats.lv.toFixed(2), inline: true }, { name: 'NW', value: (stats.nw / 1e9).toFixed(2) + "B", inline: true }).setColor(0x00AAFF)] });
-    }
-
     if (commandName === 'unverify') {
+        if (!member.roles.cache.has(conf.ROLES.ADMIN)) return interaction.reply({ content: "❌ No permission.", flags: [MessageFlags.Ephemeral] });
+
         const target = options.getMember('user');
         delete verifiedUsers[target.id];
         saveDb();
@@ -257,6 +258,8 @@ client.on('interactionCreate', async interaction => {
     }
 
     if (commandName === 'forceverify') {
+        if (!member.roles.cache.has(conf.ROLES.ADMIN)) return interaction.reply({ content: "❌ No permission.", flags: [MessageFlags.Ephemeral] });
+
         await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
         const target = options.getMember('user');
         try {
@@ -270,6 +273,8 @@ client.on('interactionCreate', async interaction => {
     }
 
     if (commandName === 'update') {
+        if (!member.roles.cache.has(conf.ROLES.ADMIN)) return interaction.reply({ content: "❌ No permission.", flags: [MessageFlags.Ephemeral] });
+
         const target = options.getMember('user');
         if (!verifiedUsers[target.id]) return interaction.reply({ content: "❌ Not verified.", flags: [MessageFlags.Ephemeral] });
         await interaction.deferReply();

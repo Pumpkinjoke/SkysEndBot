@@ -2,7 +2,7 @@
 //  RUN THIS FILE IN TERMINAL:  node deploy-commands.js
 // ====================================================
 
-const { REST, Routes, SlashCommandBuilder } = require('discord.js');
+const { REST, Routes, SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 
@@ -17,17 +17,10 @@ if (!config.TOKEN || !config.CLIENT_ID || !config.DISCORD_GUILD_ID) {
 }
 
 const commands = [
-    // 1. IHATEAPI
-    new SlashCommandBuilder()
-        .setName('ihateapi')
-        .setDescription('Shows status of Mojang and Hypixel APIs (Admin Only)'),
+    // ==========================================
+    // 🟢 PUBLIC COMMANDS
+    // ==========================================
 
-    // 2. UPDATEALL
-    new SlashCommandBuilder()
-        .setName('updateall')
-        .setDescription('Syncs roles for the entire discord'),
-
-    // 3. VERIFY
     new SlashCommandBuilder()
         .setName('verify')
         .setDescription('Link your Minecraft account')
@@ -36,7 +29,6 @@ const commands = [
                 .setDescription('Your Minecraft Username')
                 .setRequired(true)),
 
-    // 4. CHECK
     new SlashCommandBuilder()
         .setName('check')
         .setDescription('Check stats of a verified user')
@@ -45,19 +37,32 @@ const commands = [
                 .setDescription('The user to check')
                 .setRequired(true)),
 
-    // 5. UNVERIFY
+    // ==========================================
+    // 🔒 ADMIN COMMANDS
+    // ==========================================
+
+    new SlashCommandBuilder()
+        .setName('ihateapi')
+        .setDescription('ADMIN | Shows status of Mojang and Hypixel APIs')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+    new SlashCommandBuilder()
+        .setName('updateall')
+        .setDescription('ADMIN | Syncs roles for the entire discord')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
     new SlashCommandBuilder()
         .setName('unverify')
-        .setDescription('Unlink a user')
+        .setDescription('ADMIN | Unlink a user')
         .addUserOption(option => 
             option.setName('user')
                 .setDescription('The user to unverify')
-                .setRequired(true)),
+                .setRequired(true))
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
-    // 6. FORCEVERIFY
     new SlashCommandBuilder()
         .setName('forceverify')
-        .setDescription('Force verify a user (Admin)')
+        .setDescription('ADMIN | Force verify a user')
         .addUserOption(option => 
             option.setName('user')
                 .setDescription('The user')
@@ -65,16 +70,17 @@ const commands = [
         .addStringOption(option => 
             option.setName('ign')
                 .setDescription('Minecraft Username')
-                .setRequired(true)),
+                .setRequired(true))
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
-    // 7. UPDATE
     new SlashCommandBuilder()
         .setName('update')
-        .setDescription('Update a single user')
+        .setDescription('ADMIN | Update a single user')
         .addUserOption(option => 
             option.setName('user')
                 .setDescription('The user to update')
                 .setRequired(true))
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 ]
 .map(command => command.toJSON());
 
@@ -84,13 +90,12 @@ const rest = new REST({ version: '10' }).setToken(config.TOKEN);
     try {
         console.log(`🚀 Deploying commands to Server ID: ${config.DISCORD_GUILD_ID}...`);
         
-        // Registers commands ONLY to this specific server (Instant updates)
         await rest.put(
             Routes.applicationGuildCommands(config.CLIENT_ID, config.DISCORD_GUILD_ID),
             { body: commands },
         );
 
-        console.log('✅ Successfully loaded commands for this server only.');
+        console.log('✅ Successfully loaded commands! Admin commands are hidden from normal users.');
     } catch (error) {
         console.error('❌ Error deploying commands:', error);
     }
