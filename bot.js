@@ -1,4 +1,4 @@
-﻿const { Client, GatewayIntentBits, EmbedBuilder, SlashCommandBuilder, PermissionsBitField, MessageFlags } = require('discord.js');
+﻿const { Client, GatewayIntentBits, EmbedBuilder, MessageFlags } = require('discord.js');
 const { ProfileNetworthCalculator } = require('skyhelper-networth');
 const axios = require('axios');
 const fs = require('fs');
@@ -114,14 +114,59 @@ client.on('guildMemberRemove', async member => {
     }
 });
 
-// --- COMMANDS ---
 client.once('clientReady', async () => { console.log(`✅ SkysEnd Bot V14.1 Online.`); });
 
+// --- INTERACTION HANDLER ---
 client.on('interactionCreate', async interaction => {
     if (!interaction.isCommand()) return;
     const { commandName, options, user, member, guild } = interaction;
     const conf = getLatestConfig();
 
+// --- IHATEAPI COMMAND ---
+    if (commandName === 'ihateapi') {
+        if (!member.roles.cache.has(conf.ROLES.ADMIN)) return interaction.reply({ content: "❌ No permission.", flags: [MessageFlags.Ephemeral] });
+        await interaction.deferReply();
+        const embed = new EmbedBuilder().setTitle("📡 API Debugger").setTimestamp();
+        let hasError = false;
+
+        // 1. Mojang Check (Notch)
+        try {
+            const start = Date.now();
+            const mojangRes = await axios.get('https://api.mojang.com/users/profiles/minecraft/Notch');
+            embed.addFields({ name: `✅ Mojang (${Date.now()-start}ms)`, value: `\`\`\`json\n${JSON.stringify(mojangRes.data,null,2).substring(0,1000)}\`\`\`` });
+        } catch (e) {
+            hasError = true;
+            embed.addFields({ name: `❌ Mojang Error`, value: `\`\`\`json\n${JSON.stringify(e.response?.data||e.message,null,2).substring(0,1000)}\`\`\`` });
+        }
+
+        // 2. Hypixel Check (Pumpkinjoke's Profiles)
+        try {
+            const start = Date.now();
+            // Pumpkinjoke UUID: 65265a6ca6c740f6a44027e4c3cb7b86
+            // Using /v2/skyblock/profiles
+            const hypixelRes = await axios.get(`https://api.hypixel.net/v2/skyblock/profiles?key=${conf.HYPIXEL_KEY}&uuid=65265a6ca6c740f6a44027e4c3cb7b86`);
+            
+            const ping = Date.now() - start;
+            
+            // We strip the profiles array content slightly to make the output cleaner, 
+            // otherwise it's too massive for Discord
+            const previewData = {
+                success: hypixelRes.data.success,
+                profiles_found: hypixelRes.data.profiles?.length || 0,
+                first_profile_id: hypixelRes.data.profiles?.[0]?.profile_id || "None"
+            };
+
+            embed.addFields({ name: `✅ Hypixel (Pumpkinjoke) (${ping}ms)`, value: `\`\`\`json\n${JSON.stringify(previewData,null,2)}\n// Full data truncated for size\`\`\`` });
+        } catch (e) {
+            hasError = true;
+            embed.addFields({ name: `❌ Hypixel Error`, value: `\`\`\`json\n${JSON.stringify(e.response?.data||e.message,null,2).substring(0,1000)}\`\`\`` });
+        }
+        
+        embed.setColor(hasError ? 0xFF0000 : 0x00FF00);
+        interaction.followUp({ embeds: [embed] });
+    }
+
+    // --- UPDATEALL COMMAND ---
     if (commandName === 'updateall') {
         await interaction.deferReply();
         try {
@@ -140,29 +185,16 @@ client.on('interactionCreate', async interaction => {
                 const res = await syncMember(targetMember, verifiedUsers[id]);
                 if (res.success) {
                     success.push(targetMember.displayName);
-                    
                     const actual = (res.igRank || "member").toLowerCase();
                     const deserving = (res.tier || "enderman").toLowerCase();
+                    if (deserving === "voidling" && actual !== "voidling") voidEligible.push(`${targetMember.displayName} (Lv ${res.lv?.toFixed(0) || 0})`);
 
-                    // 1. VOIDLING ELIGIBLE LIST
-                    if (deserving === "voidling" && actual !== "voidling") {
-                        voidEligible.push(`${targetMember.displayName} (Lv ${res.lv?.toFixed(0) || 0})`);
-                    }
-
-                    // 2. MANUAL PROMOTION LOGIC (The Fix)
                     if (res.tier !== "Guest" && res.tier !== "ENDERMAN") {
                         if (actual === "voidling") {
-                            // Already voidling - only log if they FAILED requirements (demotion)
-                            if (deserving !== "voidling") {
-                                manual.push(`**${targetMember.displayName}**: VOIDLING ➜ **${deserving.toUpperCase()}**`);
-                            }
+                            if (deserving !== "voidling") manual.push(`**${targetMember.displayName}**: VOIDLING ➜ **${deserving.toUpperCase()}**`);
                         } else {
-                            // Not voidling in-game
                             if (deserving === "voidling") {
-                                // Deserves Voidling - Suggest Zealot promotion if they aren't even Zealot yet
-                                if (actual !== "zealot") {
-                                    manual.push(`**${targetMember.displayName}**: ${actual.toUpperCase()} ➜ **ZEALOT**`);
-                                }
+                                if (actual !== "zealot") manual.push(`**${targetMember.displayName}**: ${actual.toUpperCase()} ➜ **ZEALOT**`);
                             } else if (actual !== deserving) {
                                 manual.push(`**${targetMember.displayName}**: ${actual.toUpperCase()} ➜ **${deserving.toUpperCase()}**`);
                             }
@@ -190,7 +222,6 @@ client.on('interactionCreate', async interaction => {
         } catch (e) { interaction.followUp("❌ API Error."); console.error(e); }
     }
 
-    // --- REMAINING COMMANDS ---
     if (commandName === 'verify') {
         if (verifiedUsers[user.id]) return interaction.reply({ content: "❌ Already verified!", flags: [MessageFlags.Ephemeral] });
         await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
