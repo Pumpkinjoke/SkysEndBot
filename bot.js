@@ -14,6 +14,9 @@ function getLatestReqs() { return JSON.parse(fs.readFileSync(reqsPath, 'utf8'));
 
 let verifiedUsers = fs.existsSync(dbPath) ? JSON.parse(fs.readFileSync(dbPath)) : {};
 
+// Helper to prevent names like "Spooky_Jimmy" from turning into italics
+const escape = (text) => text ? text.replace(/[_*~`|]/g, "\\$&") : "Unknown";
+
 const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
 });
@@ -108,7 +111,7 @@ client.on('guildMemberRemove', async member => {
         saveDb();
         const logChannel = member.guild.channels.cache.get(conf.LOG_CHANNEL_ID);
         if (logChannel) {
-            const embed = new EmbedBuilder().setTitle("User Left").setDescription(`**${member.user.tag}** left. Unverified.`).setColor(0xFF0000);
+            const embed = new EmbedBuilder().setTitle("User Left").setDescription(`**${escape(member.user.tag)}** left. Unverified.`).setColor(0xFF0000);
             logChannel.send({ embeds: [embed] }).catch(() => {});
         }
     }
@@ -122,41 +125,7 @@ client.on('interactionCreate', async interaction => {
     const { commandName, options, user, member, guild } = interaction;
     const conf = getLatestConfig();
 
-
-    // ==========================================
-    // 🟢 PUBLIC COMMANDS
-    // ==========================================
-
-    if (commandName === 'verify') {
-        if (verifiedUsers[user.id]) return interaction.reply({ content: "❌ Already verified!", flags: [MessageFlags.Ephemeral] });
-        await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
-        try {
-            const mojang = await axios.get(`https://api.mojang.com/users/profiles/minecraft/${options.getString('ign')}`);
-            const uuid = mojang.data.id;
-            const hypixel = await axios.get(`https://api.hypixel.net/v2/player?key=${conf.HYPIXEL_KEY}&uuid=${uuid}`);
-            const link = hypixel.data.player?.socialMedia?.links?.DISCORD;
-            if (link !== user.username) return interaction.followUp(`❌ Mismatch. Hypixel: \`${link || "None"}\`.`);
-            verifiedUsers[user.id] = uuid;
-            saveDb();
-            await member.setNickname(options.getString('ign')).catch(() => {});
-            await syncMember(member, uuid);
-            interaction.followUp(`✅ Verified!`);
-        } catch (e) { interaction.followUp(`❌ Error Verifying.`); }
-    }
-
-    if (commandName === 'check') {
-        const target = options.getMember('user');
-        if (!verifiedUsers[target.id]) return interaction.reply({ content: "❌ Not verified.", flags: [MessageFlags.Ephemeral] });
-        await interaction.deferReply();
-        const stats = await getStats(verifiedUsers[target.id]);
-        interaction.followUp({ embeds: [new EmbedBuilder().setTitle(`Stats: ${target.displayName}`).addFields({ name: 'Level', value: stats.lv.toFixed(2), inline: true }, { name: 'NW', value: (stats.nw / 1e9).toFixed(2) + "B", inline: true }).setColor(0x00AAFF)] });
-    }
-
-
-    // ==========================================
-    // 🔒 ADMIN COMMANDS
-    // ==========================================
-
+    // 🔴 ADMIN ONLY
     if (commandName === 'ihateapi') {
         if (!member.roles.cache.has(conf.ROLES.ADMIN)) return interaction.reply({ content: "❌ No permission.", flags: [MessageFlags.Ephemeral] });
         await interaction.deferReply();
@@ -189,6 +158,7 @@ client.on('interactionCreate', async interaction => {
         interaction.followUp({ embeds: [embed] });
     }
 
+    // 🔴 ADMIN ONLY
     if (commandName === 'updateall') {
         if (!member.roles.cache.has(conf.ROLES.ADMIN)) return interaction.reply({ content: "❌ No permission.", flags: [MessageFlags.Ephemeral] });
 
@@ -202,29 +172,37 @@ client.on('interactionCreate', async interaction => {
 
             for (const [id, targetMember] of discordMembers) {
                 if (!targetMember || targetMember.user.bot) continue;
+                
+                // Get clean display name for Embed (escaped)
+                const dName = escape(targetMember.displayName);
+                const uName = escape(targetMember.user.username);
+
                 const bypassIds = [conf.ROLES.DRAG, conf.ROLES.RETIRED, conf.ROLES.SUPERVISOR, conf.ROLES.ADMIN];
-                if (targetMember.roles.cache.some(r => bypassIds.includes(r.id))) { bypassed.push(targetMember.displayName); continue; }
-                if (!verifiedUsers[id]) { unverified.push(targetMember.user.username); continue; }
+                if (targetMember.roles.cache.some(r => bypassIds.includes(r.id))) { bypassed.push(dName); continue; }
+                if (!verifiedUsers[id]) { unverified.push(uName); continue; }
 
                 const res = await syncMember(targetMember, verifiedUsers[id]);
                 if (res.success) {
-                    success.push(targetMember.displayName);
+                    success.push(dName);
                     const actual = (res.igRank || "member").toLowerCase();
                     const deserving = (res.tier || "enderman").toLowerCase();
-                    if (deserving === "voidling" && actual !== "voidling") voidEligible.push(`${targetMember.displayName} (Lv ${res.lv?.toFixed(0) || 0})`);
+                    
+                    if (deserving === "voidling" && actual !== "voidling") {
+                        voidEligible.push(`${dName} (Lv ${res.lv?.toFixed(0) || 0})`);
+                    }
 
                     if (res.tier !== "Guest" && res.tier !== "ENDERMAN") {
                         if (actual === "voidling") {
-                            if (deserving !== "voidling") manual.push(`**${targetMember.displayName}**: VOIDLING ➜ **${deserving.toUpperCase()}**`);
+                            if (deserving !== "voidling") manual.push(`**${dName}**: VOIDLING ➜ **${deserving.toUpperCase()}**`);
                         } else {
                             if (deserving === "voidling") {
-                                if (actual !== "zealot") manual.push(`**${targetMember.displayName}**: ${actual.toUpperCase()} ➜ **ZEALOT**`);
+                                if (actual !== "zealot") manual.push(`**${dName}**: ${actual.toUpperCase()} ➜ **ZEALOT**`);
                             } else if (actual !== deserving) {
-                                manual.push(`**${targetMember.displayName}**: ${actual.toUpperCase()} ➜ **${deserving.toUpperCase()}**`);
+                                manual.push(`**${dName}**: ${actual.toUpperCase()} ➜ **${deserving.toUpperCase()}**`);
                             }
                         }
                     }
-                } else failed.push(targetMember.user.username);
+                } else failed.push(uName);
                 await new Promise(r => setTimeout(r, 1500));
             }
 
@@ -246,6 +224,34 @@ client.on('interactionCreate', async interaction => {
         } catch (e) { interaction.followUp("❌ API Error."); console.error(e); }
     }
 
+    // 🟢 PUBLIC COMMAND
+    if (commandName === 'verify') {
+        if (verifiedUsers[user.id]) return interaction.reply({ content: "❌ Already verified!", flags: [MessageFlags.Ephemeral] });
+        await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
+        try {
+            const mojang = await axios.get(`https://api.mojang.com/users/profiles/minecraft/${options.getString('ign')}`);
+            const uuid = mojang.data.id;
+            const hypixel = await axios.get(`https://api.hypixel.net/v2/player?key=${conf.HYPIXEL_KEY}&uuid=${uuid}`);
+            const link = hypixel.data.player?.socialMedia?.links?.DISCORD;
+            if (link !== user.username) return interaction.followUp(`❌ Mismatch. Hypixel: \`${link || "None"}\`.`);
+            verifiedUsers[user.id] = uuid;
+            saveDb();
+            await member.setNickname(options.getString('ign')).catch(() => {});
+            await syncMember(member, uuid);
+            interaction.followUp(`✅ Verified!`);
+        } catch (e) { interaction.followUp(`❌ Error Verifying.`); }
+    }
+
+    // 🟢 PUBLIC COMMAND
+    if (commandName === 'check') {
+        const target = options.getMember('user');
+        if (!verifiedUsers[target.id]) return interaction.reply({ content: "❌ Not verified.", flags: [MessageFlags.Ephemeral] });
+        await interaction.deferReply();
+        const stats = await getStats(verifiedUsers[target.id]);
+        interaction.followUp({ embeds: [new EmbedBuilder().setTitle(`Stats: ${escape(target.displayName)}`).addFields({ name: 'Level', value: stats.lv.toFixed(2), inline: true }, { name: 'NW', value: (stats.nw / 1e9).toFixed(2) + "B", inline: true }).setColor(0x00AAFF)] });
+    }
+
+    // 🔴 ADMIN ONLY
     if (commandName === 'unverify') {
         if (!member.roles.cache.has(conf.ROLES.ADMIN)) return interaction.reply({ content: "❌ No permission.", flags: [MessageFlags.Ephemeral] });
 
@@ -254,9 +260,10 @@ client.on('interactionCreate', async interaction => {
         saveDb();
         const roles = [conf.ROLES.IN_GUILD, conf.ROLES.NOT_IN_GUILD, conf.ROLES.ENDERMAN, conf.ROLES.WATCHER, conf.ROLES.ZEALOT, conf.ROLES.VOIDLING];
         for (const r of roles) await target.roles.remove(r).catch(() => {});
-        interaction.reply({ content: `✅ Cleared **${target.user.username}**.`, flags: [MessageFlags.Ephemeral] });
+        interaction.reply({ content: `✅ Cleared **${escape(target.user.username)}**.`, flags: [MessageFlags.Ephemeral] });
     }
 
+    // 🔴 ADMIN ONLY
     if (commandName === 'forceverify') {
         if (!member.roles.cache.has(conf.ROLES.ADMIN)) return interaction.reply({ content: "❌ No permission.", flags: [MessageFlags.Ephemeral] });
 
@@ -268,10 +275,11 @@ client.on('interactionCreate', async interaction => {
             saveDb();
             await target.setNickname(options.getString('ign')).catch(() => {});
             await syncMember(target, mojang.data.id);
-            interaction.followUp(`✅ Force-verified **${target.user.username}**.`);
+            interaction.followUp(`✅ Force-verified **${escape(target.user.username)}**.`);
         } catch (e) { interaction.followUp("❌ Error."); }
     }
 
+    // 🔴 ADMIN ONLY
     if (commandName === 'update') {
         if (!member.roles.cache.has(conf.ROLES.ADMIN)) return interaction.reply({ content: "❌ No permission.", flags: [MessageFlags.Ephemeral] });
 
@@ -279,7 +287,7 @@ client.on('interactionCreate', async interaction => {
         if (!verifiedUsers[target.id]) return interaction.reply({ content: "❌ Not verified.", flags: [MessageFlags.Ephemeral] });
         await interaction.deferReply();
         const res = await syncMember(target, verifiedUsers[target.id]);
-        interaction.followUp(res.success ? `✅ Updated **${target.displayName}**.` : "❌ Failed.");
+        interaction.followUp(res.success ? `✅ Updated **${escape(target.displayName)}**.` : "❌ Failed.");
     }
 });
 
